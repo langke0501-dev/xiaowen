@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>韩雯，圣诞节快乐</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Ensure page and canvas occupy the entire viewport */
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000; /* Black background */
+            font-family: 'Inter', sans-serif;
+        }
+        canvas {
+            display: block;
+            touch-action: none; 
+            z-index: 10;
+        }
+        /* Custom text shadow for a glow effect */
+        .text-glow {
+            /* Pink/White neon glow */
+            text-shadow: 0 0 10px #ff00ff, 0 0 30px #ff00ff, 0 0 50px #ffffff;
+        }
+    </style>
+</head>
+<body class="bg-black flex items-center justify-center h-screen w-screen">
+
+    <div id="app" class="relative w-full h-full">
+        <!-- Canvas for drawing fireworks, tree, and snow -->
+        <canvas id="festiveCanvas"></canvas>
+
+        <!-- Text Overlay -->
+        <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20">
+            <h1 class="text-6xl md:text-8xl font-extrabold text-white text-glow tracking-widest p-4 rounded-xl">
+                韩雯，圣诞节快乐
+            </h1>
+            <p class="text-sm text-gray-400 mt-4 bg-black bg-opacity-30 p-2 rounded pointer-events-auto">
+                点击屏幕任意位置放烟花 🎆
+            </p>
+        </div>
+    </div>
+
+    <script type="module">
+        const canvas = document.getElementById('festiveCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Configuration ---
+        const gravity = 0.04;
+        const friction = 0.98; // Slightly more friction for particles
+        const blast_intensity = 4.5;
+        let hue = 120; // Starting hue for fireworks
+
+        // Global arrays
+        let fireworks = [];
+        let particles = [];
+        let treeLights = [];
+        let snowFlakes = [];
+        
+        // --- Utility Functions ---
+        function random(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+
+        // --- Snow Flake Class ---
+
+        class SnowFlake {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = random(0, canvas.width);
+                this.y = random(-canvas.height, 0); // Start off-screen above
+                this.radius = random(1, 4);
+                this.alpha = random(0.5, 1);
+                this.speed = random(0.5, 2);
+                this.wind = random(-0.5, 0.5); // Slight horizontal drift
+            }
+
+            update() {
+                this.y += this.speed;
+                this.x += this.wind;
+
+                // Loop the snowflake if it goes off screen
+                if (this.y > canvas.height) {
+                    this.reset();
+                }
+                // Also reset if it drifts too far horizontally
+                if (this.x > canvas.width || this.x < 0) {
+                     this.reset();
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                ctx.fill();
+            }
+        }
+        
+        // --- Sparkle/Tree Light Class ---
+
+        class Light {
+            constructor(x, y, hue) {
+                this.x = x;
+                this.y = y;
+                this.hue = hue;
+                this.initialAlpha = random(0.5, 1);
+                this.time = random(0, Math.PI * 2); // Start at a random point in the sine wave
+                this.radius = random(1.5, 3); // Slightly larger radius for impact
+            }
+
+            update() {
+                this.time += 0.08; // Slower sparkle speed
+                // Use sine wave for smooth sparkling effect (alpha fluctuation)
+                this.alpha = this.initialAlpha * (0.6 + 0.4 * Math.sin(this.time));
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+                ctx.fillStyle = `hsla(${this.hue}, 100%, 75%, ${this.alpha})`;
+                ctx.shadowColor = `hsl(${this.hue}, 100%, 75%)`;
+                ctx.shadowBlur = 4;
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset shadow for other elements
+            }
+        }
+
+        /**
+         * Firework Class: Rocket rising up.
+         */
+        class Firework {
+            constructor(startX, startY, targetX, targetY) {
+                this.x = startX;
+                this.y = startY;
+                this.targetX = targetX;
+                this.targetY = targetY;
+
+                const distanceX = targetX - startX;
+                const distanceY = targetY - startY;
+                const angle = Math.atan2(distanceY, distanceX);
+
+                const speed = 8;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+
+                this.hue = hue;
+                this.exploded = false;
+                this.targetReached = false;
+            }
+
+            update() {
+                if (this.targetReached) return;
+                
+                // Check if the rocket has passed its target Y coordinate
+                if (this.vy < 0 && this.y <= this.targetY) { 
+                    this.targetReached = true;
+                    this.explode(this.x, this.y, this.hue);
+                    return;
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                // Draw a bright dot with a trail
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 3, 0, Math.PI * 2, false);
+                ctx.fillStyle = `hsl(${this.hue}, 100%, 80%)`;
+                ctx.shadowColor = `hsl(${this.hue}, 100%, 70%)`;
+                ctx.shadowBlur = 5;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            // Firework now calls the global explode function
+            explode(x, y, hue) {
+                const particleCount = 80 + Math.floor(random(0, 70)); 
+                for (let i = 0; i < particleCount; i++) {
+                    const angle = random(0, Math.PI * 2);
+                    const magnitude = random(0.5, blast_intensity);
+                    
+                    const velocity = {
+                        x: Math.cos(angle) * magnitude,
+                        y: Math.sin(angle) * magnitude,
+                    };
+
+                    // Particles now have a flag for potential secondary explosion
+                    particles.push(new Particle(x, y, hue, velocity, 0.05));
+                }
+                this.exploded = true;
+            }
+        }
+
+        /**
+         * Particle Class: Explosion debris.
+         */
+        class Particle {
+            constructor(x, y, hue, velocity, decayMultiplier) {
+                this.x = x;
+                this.y = y;
+                this.vx = velocity.x;
+                this.vy = velocity.y;
+                this.hue = random(hue - 10, hue + 10);
+                this.alpha = 1;
+                this.decay = random(0.005, 0.015) * decayMultiplier;
+                this.size = random(1.5, 3);
+                this.shrapnel = Math.random() < 0.05; // 5% chance to be a secondary emitter
+            }
+
+            update() {
+                this.vx *= friction;
+                this.vy *= friction;
+                this.vy += gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= this.decay;
+                
+                // Secondary explosion (shrapnel effect)
+                if (this.shrapnel && this.alpha < 0.6 && this.alpha > 0.5) {
+                    this.shrapnel = false; // Explode only once
+                    this.secondaryExplode(this.x, this.y, this.hue);
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2, false);
+                ctx.fillStyle = `hsla(${this.hue}, 100%, 60%, ${this.alpha})`;
+                ctx.fill();
+            }
+
+            secondaryExplode(x, y, hue) {
+                const miniParticleCount = 10;
+                for (let i = 0; i < miniParticleCount; i++) {
+                    const angle = random(0, Math.PI * 2);
+                    const magnitude = random(0.2, 1.5);
+                    
+                    const velocity = {
+                        x: Math.cos(angle) * magnitude,
+                        y: Math.sin(angle) * magnitude,
+                    };
+
+                    // Use a higher decay multiplier for faster fading secondary particles
+                    particles.push(new Particle(x, y, hue, velocity, 2)); 
+                }
+            }
+        }
+
+        // --- Christmas Tree Drawing and Initialization ---
+
+        function drawTree() {
+            const centerX = canvas.width / 2;
+            const bottomY = canvas.height * 0.9;
+            const scale = canvas.height / 1000; // Scale tree size based on screen height
+
+            ctx.save();
+            
+            // 1. Draw the trunk
+            ctx.fillStyle = '#654321'; // Brown
+            ctx.fillRect(centerX - 15 * scale, bottomY - 50 * scale, 30 * scale, 50 * scale);
+
+            // 2. Draw the foliage (three segments)
+            // Using a single color and adding shadows for depth
+            const foliageColor = '#006400'; // Dark green
+            const segments = [
+                { topY: bottomY - 450 * scale, width: 60 * scale, height: 200 * scale }, // Top
+                { topY: bottomY - 300 * scale, width: 150 * scale, height: 250 * scale }, // Middle
+                { topY: bottomY - 150 * scale, width: 250 * scale, height: 300 * scale }  // Bottom
+            ];
+
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                ctx.fillStyle = foliageColor;
+                
+                ctx.beginPath();
+                // Bottom corners
+                ctx.moveTo(centerX - seg.width / 2, bottomY - seg.height * (i * 0.3));
+                ctx.lineTo(centerX + seg.width / 2, bottomY - seg.height * (i * 0.3));
+                // Top point
+                ctx.lineTo(centerX, seg.topY);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Optional: Add some slight light/shadow with triangles on the sides
+                ctx.fillStyle = 'rgba(0, 200, 0, 0.1)';
+                ctx.beginPath();
+                ctx.moveTo(centerX, seg.topY);
+                ctx.lineTo(centerX + seg.width / 2, bottomY - seg.height * (i * 0.3));
+                ctx.lineTo(centerX + 15 * scale, bottomY - seg.height * (i * 0.3));
+                ctx.fill();
+            }
+            
+            // 3. Draw the Star on top
+            const starCenterY = bottomY - 460 * scale;
+            ctx.fillStyle = 'yellow';
+            ctx.shadowColor = 'yellow';
+            ctx.shadowBlur = 15;
+            drawStar(centerX, starCenterY, 5, 8 * scale, 4 * scale);
+            ctx.shadowBlur = 0; // Reset shadow
+
+            // 4. Draw the Lights
+            treeLights.forEach(light => light.draw());
+
+            ctx.restore();
+        }
+        
+        // Helper function to draw a star
+        function drawStar(cx, cy, spikes, outerRadius, innerRadius) {
+            let rot = Math.PI / 2 * 3;
+            let x = cx;
+            let y = cy;
+            let step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - outerRadius);
+            for (let i = 0; i < spikes; i++) {
+                x = cx + Math.cos(rot) * outerRadius;
+                y = cy + Math.sin(rot) * outerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+
+                x = cx + Math.cos(rot) * innerRadius;
+                y = cy + Math.sin(rot) * innerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+            }
+            ctx.lineTo(cx, cy - outerRadius);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Initializes the random positions of the sparkling lights
+        function setupTreeLights() {
+            treeLights = [];
+            const centerX = canvas.width / 2;
+            const bottomY = canvas.height * 0.9;
+            const scale = canvas.height / 1000;
+            const lightCount = 80;
+
+            // Define the bounds where lights can appear (a large cone)
+            const maxTreeHeight = 400 * scale; 
+            const maxTreeWidth = 250 * scale; 
+
+            for (let i = 0; i < lightCount; i++) {
+                let y = random(bottomY - maxTreeHeight, bottomY - 50 * scale);
+                let yRatio = (y - (bottomY - maxTreeHeight)) / (maxTreeHeight - 50 * scale);
+                let currentWidth = maxTreeWidth * Math.sqrt(yRatio); 
+                
+                let x = random(centerX - currentWidth / 2, centerX + currentWidth / 2);
+                
+                // Random festive colors: Red (0), Green (120), Blue (240), Yellow (60)
+                let hueChoice = [0, 120, 60, 240, 300]; // Added pink/magenta
+                let randomHue = hueChoice[Math.floor(random(0, hueChoice.length))];
+                
+                treeLights.push(new Light(x, y, randomHue));
+            }
+        }
+
+        // Initializes snowflakes
+        function setupSnow() {
+            const snowCount = 100;
+            snowFlakes = [];
+            for (let i = 0; i < snowCount; i++) {
+                snowFlakes.push(new SnowFlake());
+            }
+        }
+
+
+        // --- Core Animation Loop ---
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. Draw a large semi-transparent black rectangle for the firework trail effect
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 2. Update and Draw Christmas Tree & Lights
+            drawTree();
+            treeLights.forEach(light => light.update());
+
+            // 3. Update and Draw Snow
+            snowFlakes.forEach(snow => {
+                snow.update();
+                snow.draw();
+            });
+
+
+            // 4. Update and draw fireworks (rockets)
+            for (let i = fireworks.length - 1; i >= 0; i--) {
+                const firework = fireworks[i];
+                firework.update();
+                firework.draw();
+
+                if (firework.exploded) {
+                    fireworks.splice(i, 1);
+                }
+            }
+
+            // 5. Update and draw particles (explosions)
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.update();
+                particle.draw();
+
+                if (particle.alpha <= 0.1) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // 6. Cycle the firework hue
+            hue = (hue + 1) % 360;
+        }
+
+        // --- Event Handlers and Initialization ---
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Clear the canvas fully on resize
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            setupTreeLights(); // Recalculate light positions on resize
+            setupSnow(); // Recalculate snow positions
+        }
+
+        function launchFirework(x, y) {
+            // Launch from a random point at the bottom of the screen
+            const startX = random(0, canvas.width);
+            const startY = canvas.height;
+            
+            // Set the target slightly above the click position for a nice explosion height
+            const targetX = x;
+            const targetY = y - random(30, 80); 
+
+            fireworks.push(new Firework(startX, startY, targetX, targetY));
+        }
+
+        // Event listener for mouse click or touch tap
+        function handleInteraction(event) {
+            let x, y;
+            if (event.clientX !== undefined) {
+                // Mouse event
+                x = event.clientX;
+                y = event.clientY;
+            } else if (event.touches && event.touches.length > 0) {
+                // Touch event
+                x = event.touches[0].clientX;
+                y = event.touches[0].clientY;
+            } else {
+                return;
+            }
+
+            event.preventDefault(); 
+            
+            // Only allow explosions above the tree line to keep the ground dark
+            const treeTopY = canvas.height * 0.9 - (canvas.height / 1000) * 450;
+            if (y < treeTopY + 50) { // Limit where fireworks can launch to avoid hitting the ground
+                 launchFirework(x, y);
+            }
+        }
+        
+        function init() {
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('mousedown', handleInteraction);
+            canvas.addEventListener('touchstart', handleInteraction);
+            
+            resizeCanvas(); // Set initial size and setup lights/snow
+            animate(); // Start the animation loop
+            
+            // Auto-launch a firework every 3 seconds for passive demonstration
+            setInterval(() => {
+                const autoTargetX = random(canvas.width * 0.1, canvas.width * 0.9);
+                const autoTargetY = random(canvas.height * 0.1, canvas.height * 0.4);
+                launchFirework(autoTargetX, autoTargetY);
+            }, 3000);
+        }
+
+        window.onload = init;
+
+    </script>
+</body>
+</html>
